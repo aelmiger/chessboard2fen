@@ -1,6 +1,6 @@
-# Real chessboard to FEN conversion
+# Real chessboard to FEN conversion.
 
-### The goal of this repo is to extract the board configuration from a chessboard image.
+The goal of this repo is to extract the board configuration from a chessboard image. Image can be from any perspective as long as all pieces are still visibel. Two neural nets are doing the conversion. One is detecting the board in the image while the other classifies each cell. Currently the nets are only trained on this specific chessboard.
 
 
 #### Example
