@@ -1,3 +1,4 @@
+from numpy.core.defchararray import index
 import tensorflow as tf
 from tensorflow import keras
 import cv2
@@ -10,6 +11,7 @@ import chess
 import chess.svg
 from io import BytesIO
 
+
 class ChessboardDetector:
     """
     Class for corner detection of a chessboard with pose estimation
@@ -20,10 +22,12 @@ class ChessboardDetector:
                      [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
     distM = np.array([[2.08959569e-01, -9.49127601e-01, -
                        2.70203242e-03, -1.20066339e-04, 1.33323676e+00]])
-    label_names = ["Bauer_s","Bauer_w","Dame_s","Dame_w","Koenig_s","Koenig_w","LEER","Laeufer_s","Laeufer_w","Pferd_s","Pferd_w","Turm_s","Turm_w"]
-    fen_char = ["p","P","q","Q","k","K","e","b","B","n","N","r","R"]
+    labelNames = ["Bauer_s", "Bauer_w", "Dame_s", "Dame_w", "Koenig_s", "Koenig_w",
+                  "LEER", "Laeufer_s", "Laeufer_w", "Pferd_s", "Pferd_w", "Turm_s", "Turm_w"]
+    fenChar = ["p", "P", "q", "Q", "k", "K", "e", "b", "B", "n", "N", "r", "R"]
+    maxFig = [8, 8, 1, 1, 1, 1, np.inf, 2, 2, 2, 2, 2, 2]
 
-    def __init__(self, detectModelPath,classificModelPath):
+    def __init__(self, detectModelPath, classificModelPath):
         """
 
         Args:
@@ -37,8 +41,7 @@ class ChessboardDetector:
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
         # Import model
         self.detectionModel = keras.models.load_model(detectModelPath)
-        self.classficModel= keras.models.load_model(classificModelPath)
-
+        self.classficModel = keras.models.load_model(classificModelPath)
 
     def calcBoardCorners(self, img):
         """ Function detects for coners of chessboard
@@ -63,69 +66,95 @@ class ChessboardDetector:
         return self.cornerPts
 
     def calcFEN(self, img, corners):
-        self.img_nn = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
+        self.img_nn = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         self.img_nn = self.img_nn / 255
 
-        scaleFacCornerEstim= img.shape[1]/512
+        scaleFacCornerEstim = img.shape[1]/512
         scaledCorners = np.array(corners) * scaleFacCornerEstim
         destCoords = np.array(
-            [[0, 80, 0], [80, 80, 0], [80, 0, 0], [0, 0, 0]],dtype=np.float32)
-        _, r, t = cv2.solvePnP(destCoords, scaledCorners, self.camM, self.distM)
+            [[0, 80, 0], [80, 80, 0], [80, 0, 0], [0, 0, 0]], dtype=np.float32)
+        _, r, t = cv2.solvePnP(destCoords, scaledCorners,
+                               self.camM, self.distM)
         imgs = []
         for i in range(8):
-                for j in range(8):
-                    cellImg = self.getImgOfCell(7-i,j,r,t)
-                    # cv2.imshow("",cellImg)
-                    # cv2.waitKey(0)
-                    imgs.append(cellImg)
+            for j in range(8):
+                cellImg = self.getImgOfCell(7-i, j, r, t)
+                # cv2.imshow("",cellImg)
+                # cv2.waitKey(0)
+                imgs.append(cellImg)
 
         imgs = np.array(imgs)
-        confidence = self.classficModel.predict(imgs,batch_size = 4)
-        preds = np.argmax(confidence,axis = -1)
+        confidence = self.classficModel.predict(imgs, batch_size=4)
+        predictions = self.filterPredicted(confidence)
+        fen_string = self.predictions2FEN(predictions)
+        boardImg = self.fen2Image(fen_string)
+
+        for c in self.cornerPts:
+            cv2.drawMarker(img, tuple((c*scaleFacCornerEstim).astype(np.int)),
+                           (0, 0, 255), markerSize=100, thickness=10)
+        cv2.imshow("Image", imutils.resize(img, width=800))
+        cv2.imshow("Detected Board", boardImg)
+        cv2.waitKey(0)
+
+    def fen2Image(self, fen_string):
+        board = chess.Board(fen_string + " w - - 0 1")
+        svg = chess.svg.board(board, size=350)
+        png = svg2png(bytestring=svg)
+        pilImg = Image.open(BytesIO(png)).convert('RGBA')
+        return cv2.cvtColor(np.array(pilImg), cv2.COLOR_RGBA2BGRA)
+
+    def predictions2FEN(self, predictions):
         fen_string = ""
         for i in range(8):
             empty_counter = 0
             for j in range(8):
-                if self.fen_char[preds[i*8+j]] == "e":
-                    empty_counter +=1
+                if self.fenChar[predictions[i*8+j]] == "e":
+                    empty_counter += 1
                     if j == 7:
                         fen_string += str(empty_counter)
                 else:
                     if empty_counter > 0:
                         fen_string += str(empty_counter)
                         empty_counter = 0
-                        fen_string +=self.fen_char[preds[i*8+j]]
+                        fen_string += self.fenChar[predictions[i*8+j]]
                     else:
-                        fen_string +=self.fen_char[preds[i*8+j]]
+                        fen_string += self.fenChar[predictions[i*8+j]]
             if i != 7:
-                fen_string+="/"
-        pass
-        board = chess.Board(fen_string+ " w - - 0 1")
-        # squares = board.attacks(chess.E4)
-        svg = chess.svg.board(board, size=350)
-        png = svg2png(bytestring=svg)
+                fen_string += "/"
+        return fen_string
 
-        pil_img = Image.open(BytesIO(png)).convert('RGBA')
+    def filterPredicted(self, confidence):
+        boardLayout = -np.ones(64)
+        sortedConfid = np.argsort(-np.amax(confidence, axis=-1))
+        for i in range(64):
+            indx = sortedConfid[i]
+            unique, counts = np.unique(boardLayout, return_counts=True)
+            figDict = dict(zip(unique, counts))
 
-        board_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGRA)
-        for c in self.cornerPts:
-            cv2.drawMarker(img, tuple((c*scaleFacCornerEstim).astype(np.int)), (0, 0, 255),markerSize=100,thickness=10)
-        cv2.imshow("Image",imutils.resize(img,width=800))
-        cv2.imshow("Detected Board",board_img)
-        cv2.waitKey(0)
+            tooManyOfType = True
+            indxCounter = 0
+            currentFig = np.argsort(-confidence[indx])
+            while(tooManyOfType):
+                try:
+                    tooManyOfType = figDict[currentFig[indxCounter]
+                                            ] >= self.maxFig[currentFig[indxCounter]]
+                except KeyError:
+                    tooManyOfType = False
+                if (tooManyOfType):
+                    indxCounter += 1
+            boardLayout[indx] = currentFig[indxCounter]
+        return boardLayout.astype(np.int)
 
-
-
-    def getImgOfCell(self,cellX,cellY,r,t):
-        black = np.zeros((100,100,1),dtype="uint8")
-        cv2.circle(black,(5+10*cellX,5+10*cellY),4,255,0)
+    def getImgOfCell(self, cellX, cellY, r, t):
+        black = np.zeros((100, 100, 1), dtype="uint8")
+        cv2.circle(black, (5+10*cellX, 5+10*cellY), 4, 255, 0)
         lowPos = np.argwhere(black)
         upPos = lowPos.copy()
-        upPos[:,2] = 13
-        pos = np.concatenate((lowPos,upPos)).astype(np.float32)
+        upPos[:, 2] = 13
+        pos = np.concatenate((lowPos, upPos)).astype(np.float32)
         imgpts, _ = cv2.projectPoints(pos, r, t, self.camM, self.distM)
-        imgpts = imgpts.reshape(-1,2)
-        rect = cv2.minAreaRect(imgpts) 
+        imgpts = imgpts.reshape(-1, 2)
+        rect = cv2.minAreaRect(imgpts)
         box = cv2.boxPoints(rect)
         box = np.int0(box)
         width = int(rect[1][0])
@@ -140,29 +169,27 @@ class ChessboardDetector:
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
         # directly warp the rotated rectangle to get the straightened rectangle
-        tempImg =  cv2.warpPerspective(self.img_nn, M, (int(width), int(height)))
+        tempImg = cv2.warpPerspective(
+            self.img_nn, M, (int(width), int(height)))
         if tempImg.shape[0] < tempImg.shape[1]:
-            tempImg =  cv2.rotate(tempImg, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        
+            tempImg = cv2.rotate(tempImg, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
         height = tempImg.shape[0]
-        width =  tempImg.shape[1] 
+        width = tempImg.shape[1]
         aspRatio = width / height
         given_Ration = 1 / 2
         if aspRatio > given_Ration:
             newWidth = height * given_Ration
             diff = round((width-newWidth)/2)
-            newMat = tempImg[:,diff:(width - diff),:]
+            newMat = tempImg[:, diff:(width - diff), :]
         elif aspRatio < given_Ration:
             newHeight = width / given_Ration
             diff = round((height-newHeight)/2)
-            newMat = tempImg[diff:(height - diff),:,:]
+            newMat = tempImg[diff:(height - diff), :, :]
         else:
             newMat = tempImg
-        newMat = imutils.resize(newMat,width=100)
-        return cv2.resize(newMat, (100,200)).reshape(200,100,3)
-
-
-
+        newMat = imutils.resize(newMat, width=100)
+        return cv2.resize(newMat, (100, 200)).reshape(200, 100, 3)
 
     def refinePredictions(self, predictions):
         """Correct estimated corner prediction by applying hough lines to a small section of image
@@ -182,18 +209,19 @@ class ChessboardDetector:
             if lines is not None:
                 for rho, theta in lines[0]:
                     if theta == 0:
-                        theta+=0.01
+                        theta += 0.01
                     x0 = rho/np.sin(theta)
                     x1 = -np.cos(theta)/np.sin(theta)
                     edgeLines.append(np.array([x0, x1]))
             else:
-                x1 = (points[(i+1)%4][1]-points[i][1])/(points[(i+1)%4][0]-points[i][0])
-                x0 = points[(i+1)%4][1]- x1 * points[(i+1)%4][0]
+                x1 = (points[(i+1) % 4][1]-points[i][1]) / \
+                    (points[(i+1) % 4][0]-points[i][0])
+                x0 = points[(i+1) % 4][1] - x1 * points[(i+1) % 4][0]
                 edgeLines.append(np.array([x0, x1]))
         cornerPts = self.intersectionPts(edgeLines)
-        hull = cv2.convexHull(np.array(cornerPts),clockwise=False)[:,0]
+        hull = cv2.convexHull(np.array(cornerPts), clockwise=False)[:, 0]
         s = hull.sum(axis=1)[0:4]
-        cornerPts = list(np.roll(hull,-np.argmin(s),axis=0))
+        cornerPts = list(np.roll(hull, -np.argmin(s), axis=0))
         return cornerPts
 
     def calcImgEdges(self):
