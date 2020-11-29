@@ -1,3 +1,4 @@
 .vscode
 input_imgs/*
 !input_imgs/orig.jpg
+__pycache__
