@@ -9,4 +9,5 @@ filenames = sorted(filenames)
 for file in filenames:
   img = cv2.imread(file)
   corners = bd.calcBoardCorners(img)
-  bd.calcFEN(img,corners)
+  if corners is not None:
+    bd.calcFEN(img,corners)
