@@ -240,23 +240,23 @@ class ChessboardDetector:
             [type]: corrected corner points
         """
         points = predictions[0, :, 0:2].astype(int)
-        edges = self.calcImgEdges()
+        # edges = self.calcImgEdges()
         edgeLines = []
         for i in range(4):
-            croppedEdges = self.cropEdgePoints(edges, points, i)
-            lines = cv2.HoughLines(croppedEdges, 1, np.pi/180, 500)
-            if lines is not None:
-                for rho, theta in lines[0]:
-                    if theta == 0:
-                        theta += 0.01
-                    x0 = rho/np.sin(theta)
-                    x1 = -np.cos(theta)/np.sin(theta)
-                    edgeLines.append(np.array([x0, x1]))
-            else:
-                x1 = (points[(i+1) % 4][1]-points[i][1]) / \
-                    (points[(i+1) % 4][0]-points[i][0])
-                x0 = points[(i+1) % 4][1] - x1 * points[(i+1) % 4][0]
-                edgeLines.append(np.array([x0, x1]))
+            # croppedEdges = self.cropEdgePoints(edges, points, i)
+            # lines = cv2.HoughLines(croppedEdges, 1, np.pi/180, 500)
+            # if lines is not None:
+            #     for rho, theta in lines[0]:
+            #         if theta == 0:
+            #             theta += 0.01
+            #         x0 = rho/np.sin(theta)
+            #         x1 = -np.cos(theta)/np.sin(theta)
+            #         edgeLines.append(np.array([x0, x1]))
+            # else:
+            x1 = (points[(i+1) % 4][1]-points[i][1]) / \
+                (points[(i+1) % 4][0]-points[i][0])
+            x0 = points[(i+1) % 4][1] - x1 * points[(i+1) % 4][0]
+            edgeLines.append(np.array([x0, x1]))
         cornerPts = self.intersectionPts(edgeLines)
         hull = cv2.convexHull(np.array(cornerPts), clockwise=False)[:, 0]
         s = hull.sum(axis=1)[0:4]
