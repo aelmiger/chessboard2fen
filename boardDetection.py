@@ -11,7 +11,6 @@ import chess
 import chess.svg
 from io import BytesIO
 
-
 class ChessboardDetector:
     """
     Class for corner detection of a chessboard with pose estimation
@@ -42,6 +41,10 @@ class ChessboardDetector:
         # Import model
         self.detectionModel = keras.models.load_model(detectModelPath)
         self.classficModel = keras.models.load_model(classificModelPath)
+        self.handDetection = cv2.dnn.readNetFromDarknet("yolo_hand_model/handDetection.cfg", "yolo_hand_model/handDetection.weights")
+        self.handDetection.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+        self.handDetection.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+
 
     def calcBoardCorners(self, img):
         """ Function detects for coners of chessboard
@@ -60,7 +63,45 @@ class ChessboardDetector:
         if(self.overlappingPoints(predictions)):
             predictions = self.rotAndPredict(30)
 
+        if predictions is None:
+            return None
+            
         self.cornerPts = self.refinePredictions(predictions)
+
+        ih, iw = self.img_rgb.shape[:2]
+        ln = self.handDetection.getLayerNames()
+        ln = [ln[i[0] - 1] for i in self.handDetection.getUnconnectedOutLayers()]
+        blob = cv2.dnn.blobFromImage(self.img_rgb, 1 / 255.0, (416, 416), swapRB=False, crop=False)
+        self.handDetection.setInput(blob)
+        layerOutputs = self.handDetection.forward(ln)
+        
+        boxes = []
+        confidences = []
+        for output in layerOutputs:
+            for detection in output:
+                scores = detection[5:]
+                classID = np.argmax(scores)
+                confidence = scores[classID]
+                if confidence > 0.5:
+                    box = detection[0:4] * np.array([iw, ih, iw, ih])
+                    (centerX, centerY, width, height) = box.astype("int")
+                    x = int(centerX - (width / 2))
+                    y = int(centerY - (height / 2))
+                    boxes.append([x, y, int(width), int(height)])
+                    confidences.append(float(confidence))
+
+        idxs = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.3)
+        if len(idxs) > 0:
+            for i in idxs.flatten():
+                x, y = (boxes[i][0], boxes[i][1])
+                w, h = (boxes[i][2], boxes[i][3])
+                confidence = confidences[i]
+                ppCheck1 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y), False)
+                ppCheck2 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y), False)
+                ppCheck3 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y+h), False)
+                ppCheck4 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y+h), False)
+                if ppCheck1 >0 or ppCheck2 >0 or ppCheck3 >0 or ppCheck4 >0:
+                    print("Hand over board")
         # cv2.imshow('img', cv2.cvtColor(self.img_rgb, cv2.COLOR_RGB2BGR))
         # cv2.waitKey(0)
         return self.cornerPts
@@ -82,7 +123,6 @@ class ChessboardDetector:
                 # cv2.imshow("",cellImg)
                 # cv2.waitKey(0)
                 imgs.append(cellImg)
-
         imgs = np.array(imgs)
         confidence = self.classficModel.predict(imgs, batch_size=4)
         predictions = self.filterPredicted(confidence)
@@ -173,7 +213,6 @@ class ChessboardDetector:
             self.img_nn, M, (int(width), int(height)))
         if tempImg.shape[0] < tempImg.shape[1]:
             tempImg = cv2.rotate(tempImg, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
         height = tempImg.shape[0]
         width = tempImg.shape[1]
         aspRatio = width / height
@@ -288,9 +327,9 @@ class ChessboardDetector:
         rotImg = imutils.rotate(self.img_rgb, angle=-angle)
         predictions = self.detectionModel.predict(
             np.expand_dims(rotImg, axis=0))
-        assert not self.overlappingPoints(
-            predictions), "could not detect 4 corners"
-
+        if self.overlappingPoints(predictions):
+            print("Could not detect 4 Corners")
+            return None
         # Correct rotation of predicted points
         M = cv2.getRotationMatrix2D((256, 192), angle, 1)
         predictions[0, :, 2] = 1
