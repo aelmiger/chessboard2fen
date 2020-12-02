@@ -24,7 +24,10 @@ class ChessboardDetector:
     labelNames = ["Bauer_s", "Bauer_w", "Dame_s", "Dame_w", "Koenig_s", "Koenig_w",
                   "LEER", "Laeufer_s", "Laeufer_w", "Pferd_s", "Pferd_w", "Turm_s", "Turm_w"]
     fenChar = ["p", "P", "q", "Q", "k", "K", "e", "b", "B", "n", "N", "r", "R"]
+    posChar = ["a","b","c","d","e","f","g","h"]
     maxFig = [8, 8, 1, 1, 1, 1, np.inf, 2, 2, 2, 2, 2, 2]
+
+    chessboard = np.zeros((8,8))
 
     def __init__(self, detectModelPath, classificModelPath):
         """
@@ -65,43 +68,13 @@ class ChessboardDetector:
 
         if predictions is None:
             return None
-            
+        
         self.cornerPts = self.refinePredictions(predictions)
 
-        # ih, iw = self.img_rgb.shape[:2]
-        # ln = self.handDetection.getLayerNames()
-        # ln = [ln[i[0] - 1] for i in self.handDetection.getUnconnectedOutLayers()]
-        # blob = cv2.dnn.blobFromImage(self.img_rgb, 1 / 255.0, (416, 416), swapRB=False, crop=False)
-        # self.handDetection.setInput(blob)
-        # layerOutputs = self.handDetection.forward(ln)
+        # Check if hand is occluding the board
+        # if self.detectHandOverBoard():
+        #     return None
         
-        # boxes = []
-        # confidences = []
-        # for output in layerOutputs:
-        #     for detection in output:
-        #         scores = detection[5:]
-        #         classID = np.argmax(scores)
-        #         confidence = scores[classID]
-        #         if confidence > 0.5:
-        #             box = detection[0:4] * np.array([iw, ih, iw, ih])
-        #             (centerX, centerY, width, height) = box.astype("int")
-        #             x = int(centerX - (width / 2))
-        #             y = int(centerY - (height / 2))
-        #             boxes.append([x, y, int(width), int(height)])
-        #             confidences.append(float(confidence))
-
-        # idxs = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.3)
-        # if len(idxs) > 0:
-        #     for i in idxs.flatten():
-        #         x, y = (boxes[i][0], boxes[i][1])
-        #         w, h = (boxes[i][2], boxes[i][3])
-        #         confidence = confidences[i]
-        #         ppCheck1 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y), False)
-        #         ppCheck2 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y), False)
-        #         ppCheck3 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y+h), False)
-        #         ppCheck4 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y+h), False)
-        #         if ppCheck1 >0 or ppCheck2 >0 or ppCheck3 >0 or ppCheck4 >0:
-        #             print("Hand over board")
         # cv2.imshow('img', cv2.cvtColor(self.img_rgb, cv2.COLOR_RGB2BGR))
         # cv2.waitKey(0)
         return self.cornerPts
@@ -124,8 +97,10 @@ class ChessboardDetector:
                 # cv2.waitKey(0)
                 imgs.append(cellImg)
         imgs = np.array(imgs)
+        
         confidence = self.classficModel.predict(imgs, batch_size=4)
         predictions = self.filterPredicted(confidence)
+        # self.predictions2move(predictions)
         fen_string = self.predictions2FEN(predictions)
         boardImg = self.fen2Image(fen_string)
 
@@ -135,6 +110,86 @@ class ChessboardDetector:
         cv2.imshow("Image", imutils.resize(img, width=800))
         cv2.imshow("Detected Board", boardImg)
         cv2.waitKey(0)
+
+    def predictions2move(self,predictions):
+        diff = self.chessboard - predictions.reshape(8,8)
+        diffLocations = np.transpose(np.nonzero(diff))
+        locationNames = []
+        boardChanged = False
+        for loc in diffLocations:
+            locationNames.append(self.posChar[loc[1]]+str(8-loc[0]))
+        if len(locationNames) == 2:
+            moveOption1 = chess.Move.from_uci(locationNames[0]+locationNames[1])
+            moveOption2 = chess.Move.from_uci(locationNames[1]+locationNames[0])
+            if moveOption1 in board.legal_moves:
+                board.push_uci(moveOption1)
+                boardChanged = True
+            elif moveOption2 in board.legal_moves:
+                board.push_uci(moveOption2)
+                boardChanged = True
+            else:
+                print("No legal move in Img")
+        # Casteling moves
+        elif len(locationNames) == 4:
+            if "a1" in locationNames and chess.Move.from_uci("e1c1") in board.legal_moves:
+                board.push_uci("e1c1")
+                boardChanged = True
+            elif "h1" in locationNames and chess.Move.from_uci("e1g1") in board.legal_moves:
+                board.push_uci("e1g1")
+                boardChanged = True
+            elif "a8" in locationNames and chess.Move.from_uci("e8c8") in board.legal_moves:
+                board.push_uci("e8c8")
+                boardChanged = True
+            elif "h8" in locationNames and chess.Move.from_uci("e8g8") in board.legal_moves:
+                board.push_uci("e8g8")                
+                boardChanged = True            
+            else:
+                print("No legal move in Img")
+        else:
+            print("No legal move in Img")
+        if boardChanged:
+            self.chessboard = predictions.reshape(8,8)
+        return boardChanged
+
+
+        
+
+    def detectHandOverBoard(self):
+        ih, iw = self.img_rgb.shape[:2]
+        ln = self.handDetection.getLayerNames()
+        ln = [ln[i[0] - 1] for i in self.handDetection.getUnconnectedOutLayers()]
+        blob = cv2.dnn.blobFromImage(self.img_rgb, 1 / 255.0, (416, 416), swapRB=False, crop=False)
+        self.handDetection.setInput(blob)
+        layerOutputs = self.handDetection.forward(ln)
+        
+        boxes = []
+        confidences = []
+        for output in layerOutputs:
+            for detection in output:
+                scores = detection[5:]
+                classID = np.argmax(scores)
+                confidence = scores[classID]
+                if confidence > 0.5:
+                    box = detection[0:4] * np.array([iw, ih, iw, ih])
+                    (centerX, centerY, width, height) = box.astype("int")
+                    x = int(centerX - (width / 2))
+                    y = int(centerY - (height / 2))
+                    boxes.append([x, y, int(width), int(height)])
+                    confidences.append(float(confidence))
+
+        idxs = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.3)
+        if len(idxs) > 0:
+            for i in idxs.flatten():
+                x, y = (boxes[i][0], boxes[i][1])
+                w, h = (boxes[i][2], boxes[i][3])
+                confidence = confidences[i]
+                ppCheck1 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y), False)
+                ppCheck2 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y), False)
+                ppCheck3 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y+h), False)
+                ppCheck4 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y+h), False)
+                if ppCheck1 >0 or ppCheck2 >0 or ppCheck3 >0 or ppCheck4 >0:
+                    return True
+        return False
 
     def fen2Image(self, fen_string):
         board = chess.Board(fen_string + " w - - 0 1")
