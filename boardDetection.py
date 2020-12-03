@@ -1,15 +1,9 @@
-from numpy.core.defchararray import index
 import tensorflow as tf
 from tensorflow import keras
 import cv2
 import numpy as np
 from scipy.spatial.distance import cdist
 import imutils
-from PIL import Image
-from cairosvg import svg2png
-import chess
-import chess.svg
-from io import BytesIO
 
 class ChessboardDetector:
     """
@@ -23,11 +17,10 @@ class ChessboardDetector:
                        2.70203242e-03, -1.20066339e-04, 1.33323676e+00]])
     labelNames = ["Bauer_s", "Bauer_w", "Dame_s", "Dame_w", "Koenig_s", "Koenig_w",
                   "LEER", "Laeufer_s", "Laeufer_w", "Pferd_s", "Pferd_w", "Turm_s", "Turm_w"]
-    fenChar = ["p", "P", "q", "Q", "k", "K", "e", "b", "B", "n", "N", "r", "R"]
-    posChar = ["a","b","c","d","e","f","g","h"]
     maxFig = [8, 8, 1, 1, 1, 1, np.inf, 2, 2, 2, 2, 2, 2]
+    destCoords = np.array(
+        [[0, 80, 0], [80, 80, 0], [80, 0, 0], [0, 0, 0]], dtype=np.float32)
 
-    chessboard = np.zeros((8,8))
 
     def __init__(self, detectModelPath, classificModelPath):
         """
@@ -49,7 +42,7 @@ class ChessboardDetector:
         # self.handDetection.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
 
 
-    def calcBoardCorners(self, img):
+    def predictBoardCorners(self, img):
         """ Function detects for coners of chessboard
 
         Args:
@@ -75,85 +68,25 @@ class ChessboardDetector:
         # if self.detectHandOverBoard():
         #     return None
         
-        # cv2.imshow('img', cv2.cvtColor(self.img_rgb, cv2.COLOR_RGB2BGR))
-        # cv2.waitKey(0)
         return self.cornerPts
 
-    def calcFEN(self, img, corners):
+    def predictBoard(self, img, corners):
         self.img_nn = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         self.img_nn = self.img_nn / 255
-
         scaleFacCornerEstim = img.shape[1]/512
         scaledCorners = np.array(corners) * scaleFacCornerEstim
-        destCoords = np.array(
-            [[0, 80, 0], [80, 80, 0], [80, 0, 0], [0, 0, 0]], dtype=np.float32)
-        _, r, t = cv2.solvePnP(destCoords, scaledCorners,
+        _, r, t = cv2.solvePnP(self.destCoords, scaledCorners,
                                self.camM, self.distM)
         imgs = []
         for i in range(8):
             for j in range(8):
                 cellImg = self.getImgOfCell(7-i, j, r, t)
-                # cv2.imshow("",cellImg)
-                # cv2.waitKey(0)
                 imgs.append(cellImg)
         imgs = np.array(imgs)
-        
         confidence = self.classficModel.predict(imgs, batch_size=4)
-        predictions = self.filterPredicted(confidence)
-        # self.predictions2move(predictions)
-        fen_string = self.predictions2FEN(predictions)
-        boardImg = self.fen2Image(fen_string)
-
-        for c in self.cornerPts:
-            cv2.drawMarker(img, tuple((c*scaleFacCornerEstim).astype(np.int)),
-                           (0, 0, 255), markerSize=100, thickness=10)
-        cv2.imshow("Image", imutils.resize(img, width=800))
-        cv2.imshow("Detected Board", boardImg)
-        cv2.waitKey(0)
-
-    def predictions2move(self,predictions):
-        diff = self.chessboard - predictions.reshape(8,8)
-        diffLocations = np.transpose(np.nonzero(diff))
-        locationNames = []
-        boardChanged = False
-        for loc in diffLocations:
-            locationNames.append(self.posChar[loc[1]]+str(8-loc[0]))
-        if len(locationNames) == 2:
-            moveOption1 = chess.Move.from_uci(locationNames[0]+locationNames[1])
-            moveOption2 = chess.Move.from_uci(locationNames[1]+locationNames[0])
-            if moveOption1 in board.legal_moves:
-                board.push_uci(moveOption1)
-                boardChanged = True
-            elif moveOption2 in board.legal_moves:
-                board.push_uci(moveOption2)
-                boardChanged = True
-            else:
-                print("No legal move in Img")
-        # Casteling moves
-        elif len(locationNames) == 4:
-            if "a1" in locationNames and chess.Move.from_uci("e1c1") in board.legal_moves:
-                board.push_uci("e1c1")
-                boardChanged = True
-            elif "h1" in locationNames and chess.Move.from_uci("e1g1") in board.legal_moves:
-                board.push_uci("e1g1")
-                boardChanged = True
-            elif "a8" in locationNames and chess.Move.from_uci("e8c8") in board.legal_moves:
-                board.push_uci("e8c8")
-                boardChanged = True
-            elif "h8" in locationNames and chess.Move.from_uci("e8g8") in board.legal_moves:
-                board.push_uci("e8g8")                
-                boardChanged = True            
-            else:
-                print("No legal move in Img")
-        else:
-            print("No legal move in Img")
-        if boardChanged:
-            self.chessboard = predictions.reshape(8,8)
-        return boardChanged
-
+        return self.filterPredicted(confidence)
 
         
-
     def detectHandOverBoard(self):
         ih, iw = self.img_rgb.shape[:2]
         ln = self.handDetection.getLayerNames()
@@ -191,32 +124,6 @@ class ChessboardDetector:
                     return True
         return False
 
-    def fen2Image(self, fen_string):
-        board = chess.Board(fen_string + " w - - 0 1")
-        svg = chess.svg.board(board, size=350)
-        png = svg2png(bytestring=svg)
-        pilImg = Image.open(BytesIO(png)).convert('RGBA')
-        return cv2.cvtColor(np.array(pilImg), cv2.COLOR_RGBA2BGRA)
-
-    def predictions2FEN(self, predictions):
-        fen_string = ""
-        for i in range(8):
-            empty_counter = 0
-            for j in range(8):
-                if self.fenChar[predictions[i*8+j]] == "e":
-                    empty_counter += 1
-                    if j == 7:
-                        fen_string += str(empty_counter)
-                else:
-                    if empty_counter > 0:
-                        fen_string += str(empty_counter)
-                        empty_counter = 0
-                        fen_string += self.fenChar[predictions[i*8+j]]
-                    else:
-                        fen_string += self.fenChar[predictions[i*8+j]]
-            if i != 7:
-                fen_string += "/"
-        return fen_string
 
     def filterPredicted(self, confidence):
         boardLayout = -np.ones(64)
@@ -286,7 +193,7 @@ class ChessboardDetector:
         return cv2.resize(newMat, (100, 200)).reshape(200, 100, 3)
 
     def refinePredictions(self, predictions):
-        """Correct estimated corner prediction by applying hough lines to a small section of image
+        """Sort predicted corners in a counter clockwise fashion. Top left corner is the first element
 
         Args:
             predictions ([type]): predictions of nn model
@@ -295,80 +202,10 @@ class ChessboardDetector:
             [type]: corrected corner points
         """
         points = predictions[0, :, 0:2].astype(int)
-        # edges = self.calcImgEdges()
-        edgeLines = []
-        for i in range(4):
-            # croppedEdges = self.cropEdgePoints(edges, points, i)
-            # lines = cv2.HoughLines(croppedEdges, 1, np.pi/180, 500)
-            # if lines is not None:
-            #     for rho, theta in lines[0]:
-            #         if theta == 0:
-            #             theta += 0.01
-            #         x0 = rho/np.sin(theta)
-            #         x1 = -np.cos(theta)/np.sin(theta)
-            #         edgeLines.append(np.array([x0, x1]))
-            # else:
-            x1 = (points[(i+1) % 4][1]-points[i][1]) / \
-                (points[(i+1) % 4][0]-points[i][0])
-            x0 = points[(i+1) % 4][1] - x1 * points[(i+1) % 4][0]
-            edgeLines.append(np.array([x0, x1]))
-        cornerPts = self.intersectionPts(edgeLines)
-        hull = cv2.convexHull(np.array(cornerPts), clockwise=False)[:, 0]
+        hull = cv2.convexHull(points, clockwise=False)[:, 0]
         s = hull.sum(axis=1)[0:4]
         cornerPts = list(np.roll(hull, -np.argmin(s), axis=0))
         return cornerPts
-
-    def calcImgEdges(self):
-        """Canny edge detection
-
-        Returns:
-            [type]: edge img
-        """
-        gray = cv2.cvtColor(self.img_rgb, cv2.COLOR_RGB2GRAY)
-        gray = cv2.blur(gray, (3, 3))
-        return cv2.Canny(gray, 20, 250)
-
-    def cropEdgePoints(self, edges, points, lineIdx):
-        """crop the edge image so it only includes points around the estimated line
-
-        Args:
-            edges ([type]): edge image
-            points ([type]): estimated corner points
-            lineIdx ([type]): index of current line
-
-        Returns:
-            [type]: image of cropped edges
-        """
-        black_img = np.zeros_like(edges)
-        cv2.line(black_img, tuple(points[lineIdx]), tuple(
-            points[(lineIdx+1) % 4]), 255, 3)
-        return cv2.bitwise_and(edges, black_img, mask=black_img)
-
-    def intersectionPts(self, lines):
-        """calculate the intersection points of the detected lines
-
-        Args:
-            lines ([type]): line parameters
-
-        Returns:
-            [type]: refined corner points
-        """
-        intersecPts = []
-        for i in range(4):
-            x0 = lines[i][0]
-            x1 = lines[i][1]
-            x2 = lines[(i-1) % 4][0]
-            x3 = lines[(i-1) % 4][1]
-            cx = (x0-x2)/(x3-x1)
-            cy = x3*cx+x2
-            c = np.round(np.array([cx, cy])).astype(np.int)
-            # p1 = np.round(np.array([0, x0])).astype(np.int)
-            # p2 = np.round(np.array([img_width, x1*img_width+x0])).astype(np.int)
-            # cv2.line(self.img_rgb, tuple(p1), tuple(p2), (0,0,255), 1)
-            # cv2.circle(self.img_rgb,tuple(points[i]),3,255,-1)
-            cv2.drawMarker(self.img_rgb, tuple(c), (0, 255, 0))
-            intersecPts.append(c)
-        return intersecPts
 
     def rotAndPredict(self, angle):
         """Rotates input img and runs prediction again
