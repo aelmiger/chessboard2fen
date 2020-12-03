@@ -11,18 +11,26 @@ class Chessboard:
 
     posChar = ["a", "b", "c", "d", "e", "f", "g", "h"]
     fenChar = ["p", "P", "q", "Q", "k", "K", "e", "b", "B", "n", "N", "r", "R"]
+    numericBoard = np.array([[11,  9,  7,  2,  4,  7,  9, 11],
+                             [0,  0,  0,  0,  0,  0,  0,  0],
+                             [6,  6,  6,  6,  6,  6,  6,  6],
+                             [6,  6,  6,  6,  6,  6,  6,  6],
+                             [6,  6,  6,  6,  6,  6,  6,  6],
+                             [6,  6,  6,  6,  6,  6,  6,  6],
+                             [1,  1,  1,  1,  1,  1,  1,  1],
+                             [12, 10,  8,  3,  5,  8, 10, 12]])
 
     def __init__(self):
         self.board = chess.Board()
-        self.numericBoard = np.zeros((8, 8))*99
 
-    def predictions2Image(self,predictions):
-        fen_string = self.predictions2FEN(predictions)
+    def predictions2Image(self, predictions):
+        rotPredictions = self.rotatePredictions(predictions)
+        fen_string = self.predictions2FEN(rotPredictions)
         return self.fen2Image(fen_string)
 
-
     def predictions2move(self, predictions):
-        diff = self.numericBoard - predictions.reshape(8, 8)
+        rotPredictions = self.rotatePredictions(predictions)
+        diff = self.numericBoard - rotPredictions
         diffLocations = np.transpose(np.nonzero(diff))
         locationNames = []
         boardChanged = False
@@ -60,15 +68,23 @@ class Chessboard:
         else:
             print("No legal move in Img")
         if boardChanged:
-            self.numericBoard = predictions.reshape(8, 8)
+            self.numericBoard = rotPredictions
         return boardChanged
 
+    def rotatePredictions(self,predictions):
+        preds = predictions.reshape(8,8)
+        diffs = []
+        for i in range(4):
+            diffs.append(np.count_nonzero(self.numericBoard-np.rot90(preds,i)))
+        return np.rot90(preds,np.argmin(diffs))
+
     def predictions2FEN(self, predictions):
+        rotPredictions=self.rotatePredictions(predictions).reshape(64)
         fen_string = ""
         for i in range(8):
             empty_counter = 0
             for j in range(8):
-                if self.fenChar[predictions[i*8+j]] == "e":
+                if self.fenChar[rotPredictions[i*8+j]] == "e":
                     empty_counter += 1
                     if j == 7:
                         fen_string += str(empty_counter)
@@ -76,9 +92,9 @@ class Chessboard:
                     if empty_counter > 0:
                         fen_string += str(empty_counter)
                         empty_counter = 0
-                        fen_string += self.fenChar[predictions[i*8+j]]
+                        fen_string += self.fenChar[rotPredictions[i*8+j]]
                     else:
-                        fen_string += self.fenChar[predictions[i*8+j]]
+                        fen_string += self.fenChar[rotPredictions[i*8+j]]
             if i != 7:
                 fen_string += "/"
         return fen_string
