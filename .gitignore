@@ -2,3 +2,5 @@
 input_imgs/*
 !input_imgs/orig.jpg
 __pycache__
+yolo_hand_model
+yolo-hand-detection
