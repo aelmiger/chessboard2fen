@@ -4,3 +4,4 @@ input_imgs/*
 __pycache__
 yolo_hand_model
 yolo-hand-detection
+labeled_Imgs
