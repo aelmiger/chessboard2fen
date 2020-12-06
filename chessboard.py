@@ -161,7 +161,8 @@ class Chessboard:
         if len(self.board.move_stack) > 0:
             bestMvArr = chess.svg.Arrow(self.bestMv.from_square,self.bestMv.to_square,color="blue")
             mvArr = chess.svg.Arrow(self.mv.from_square,self.mv.to_square,color="green")
-            svg = chess.svg.board(self.board,lastmove=self.board.peek(),arrows = [mvArr,bestMvArr], size=350)
+            # svg = chess.svg.board(self.board,lastmove=self.board.peek(),arrows = [mvArr,bestMvArr], size=350)
+            svg = chess.svg.board(self.board,lastmove=self.board.peek(), size=350)
         else:
             svg = chess.svg.board(self.board, size=350)
         png = svg2png(bytestring=svg)
