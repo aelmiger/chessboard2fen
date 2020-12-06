@@ -105,7 +105,7 @@ class ChessboardDetector:
             confidence ([type]): confidence of classification prediction
 
         Returns:
-            [type]: filtered board
+            [type]: filtered predictions
         """
         boardLayout = -np.ones(64)
         sortedConfid = np.argsort(-np.amax(confidence, axis=-1))
@@ -246,11 +246,11 @@ class ChessboardDetector:
         self.img_rgb = cv2.cvtColor(self.img_rgb, cv2.COLOR_BGR2RGB)
 
     def writeCellImgsToFolder(self,predictions,imgs):
-        """Function 
+        """Creating training data. Predict board and save each cell img in subfolder
 
         Args:
-            predictions ([type]): [description]
-            imgs ([type]): [description]
+            predictions ([type]): filtered predictions
+            imgs ([type]): list of cell imgs
         """
         for i in range(64):
             cv2.imwrite('labeled_Imgs/'+str(self.labelNames[predictions[i]])+"/"+str(self.counter)+".png",cv2.cvtColor((imgs[i]*255).astype(np.uint8),cv2.COLOR_RGB2BGR))
