@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 import imutils
 
+
 class ChessboardDetector:
     """
     Class for corner detection of a chessboard with pose estimation
@@ -20,7 +21,7 @@ class ChessboardDetector:
     maxFig = [8, 8, 1, 1, 1, 1, np.inf, 2, 2, 2, 2, 2, 2]
     destCoords = np.array(
         [[0, 80, 0], [80, 80, 0], [80, 0, 0], [0, 0, 0]], dtype=np.float32)
-
+    counter = 0
 
     def __init__(self, detectModelPath, classificModelPath):
         """
@@ -29,17 +30,16 @@ class ChessboardDetector:
             detectModelPath (string): Folder path to Keras Pose Model
             classificModelPath (string): Folder path to Keras Classification Model
         """
+        # Speed up inference
+        tf.config.optimizer.set_jit(True)
         # Prevent CuDNN Error
         physical_devices = tf.config.experimental.list_physical_devices('GPU')
         assert len(
             physical_devices) > 0, "Not enough GPU hardware devices available"
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
-        # Import model
+        # Import models
         self.detectionModel = keras.models.load_model(detectModelPath)
         self.classficModel = keras.models.load_model(classificModelPath)
-        # self.handDetection = cv2.dnn.readNetFromDarknet("yolo_hand_model/handDetection.cfg", "yolo_hand_model/handDetection.weights")
-        # self.handDetection.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-        # self.handDetection.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
 
 
     def predictBoardCorners(self, img):
@@ -50,27 +50,34 @@ class ChessboardDetector:
         """
         assert img.shape[2] == 3, "image should be in color"
 
+        #convert img to right size and rgb order
         self.preprocessImg(img)
 
+        # estimate 4 board corners 
         predictions = self.detectionModel.predict(
             np.expand_dims(self.img_rgb, axis=0))
 
-        # if two points are too close -> rotate image and predict again
+        # if two points are too close -> rotate image by 45degrees and predict again
         if(self.overlappingPoints(predictions)):
             predictions = self.rotAndPredict(30)
 
         if predictions is None:
             return None
         
-        self.cornerPts = self.refinePredictions(predictions)
-
-        # Check if hand is occluding the board
-        # if self.detectHandOverBoard():
-        #     return None
-        
+        #sort chessboard cornerpoints in a clockwise fashion starting with top left point
+        self.cornerPts = self.refinePredictions(predictions)        
         return self.cornerPts
 
     def predictBoard(self, img, corners):
+        """Predict board with given image and corners .
+
+        Args:
+            img ([type]): [description]
+            corners ([type]): [description]
+
+        Returns:
+            [type]: [description]
+        """
         self.img_nn = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         self.img_nn = self.img_nn / 255
         scaleFacCornerEstim = img.shape[1]/512
@@ -81,51 +88,25 @@ class ChessboardDetector:
         for i in range(8):
             for j in range(8):
                 cellImg = self.getImgOfCell(7-i, j, r, t)
+                # cv2.imshow("",cellImg)
+                # cv2.waitKey(0)
                 imgs.append(cellImg)
         imgs = np.array(imgs)
-        confidence = self.classficModel.predict(imgs, batch_size=4)
-        return self.filterPredicted(confidence)
-
-        
-    def detectHandOverBoard(self):
-        ih, iw = self.img_rgb.shape[:2]
-        ln = self.handDetection.getLayerNames()
-        ln = [ln[i[0] - 1] for i in self.handDetection.getUnconnectedOutLayers()]
-        blob = cv2.dnn.blobFromImage(self.img_rgb, 1 / 255.0, (416, 416), swapRB=False, crop=False)
-        self.handDetection.setInput(blob)
-        layerOutputs = self.handDetection.forward(ln)
-        
-        boxes = []
-        confidences = []
-        for output in layerOutputs:
-            for detection in output:
-                scores = detection[5:]
-                classID = np.argmax(scores)
-                confidence = scores[classID]
-                if confidence > 0.5:
-                    box = detection[0:4] * np.array([iw, ih, iw, ih])
-                    (centerX, centerY, width, height) = box.astype("int")
-                    x = int(centerX - (width / 2))
-                    y = int(centerY - (height / 2))
-                    boxes.append([x, y, int(width), int(height)])
-                    confidences.append(float(confidence))
-
-        idxs = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.3)
-        if len(idxs) > 0:
-            for i in idxs.flatten():
-                x, y = (boxes[i][0], boxes[i][1])
-                w, h = (boxes[i][2], boxes[i][3])
-                confidence = confidences[i]
-                ppCheck1 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y), False)
-                ppCheck2 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y), False)
-                ppCheck3 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x, y+h), False)
-                ppCheck4 = cv2.pointPolygonTest(np.array(self.cornerPts).reshape(-1,1,2), (x+w, y+h), False)
-                if ppCheck1 >0 or ppCheck2 >0 or ppCheck3 >0 or ppCheck4 >0:
-                    return True
-        return False
+        confidence = self.classficModel.predict(imgs, batch_size=8)
+        predictions =  self.filterPredicted(confidence)
+        # self.writeCellImgsToFolder(predictions,imgs)
+        return predictions
 
 
     def filterPredicted(self, confidence):
+        """Filter out predictions of chess pieces by logic (only one king on board etc.)
+
+        Args:
+            confidence ([type]): confidence of classification prediction
+
+        Returns:
+            [type]: filtered board
+        """
         boardLayout = -np.ones(64)
         sortedConfid = np.argsort(-np.amax(confidence, axis=-1))
         for i in range(64):
@@ -148,8 +129,19 @@ class ChessboardDetector:
         return boardLayout.astype(np.int)
 
     def getImgOfCell(self, cellX, cellY, r, t):
+        """Get the image of a given cell .
+
+        Args:
+            cellX ([type]): [description]
+            cellY ([type]): [description]
+            r ([type]): [description]
+            t ([type]): [description]
+
+        Returns:
+            [type]: [description]
+        """
         black = np.zeros((100, 100, 1), dtype="uint8")
-        cv2.circle(black, (5+10*cellX, 5+10*cellY), 4, 255, 0)
+        cv2.circle(black, (5+10*cellX, 5+10*cellY), 5, 255, 0)
         lowPos = np.argwhere(black)
         upPos = lowPos.copy()
         upPos[:, 2] = 13
@@ -193,7 +185,7 @@ class ChessboardDetector:
         return cv2.resize(newMat, (100, 200)).reshape(200, 100, 3)
 
     def refinePredictions(self, predictions):
-        """Sort predicted corners in a counter clockwise fashion. Top left corner is the first element
+        """Sort predicted corners in a clockwise fashion. Top left corner is the first element
 
         Args:
             predictions ([type]): predictions of nn model
@@ -245,5 +237,21 @@ class ChessboardDetector:
         return not len(indxs) == 0
 
     def preprocessImg(self, img):
+        """Preprocess the image before processing it .
+
+        Args:
+            img ([type]): [description]
+        """
         self.img_rgb = cv2.resize(img, (512, 384))
         self.img_rgb = cv2.cvtColor(self.img_rgb, cv2.COLOR_BGR2RGB)
+
+    def writeCellImgsToFolder(self,predictions,imgs):
+        """Function 
+
+        Args:
+            predictions ([type]): [description]
+            imgs ([type]): [description]
+        """
+        for i in range(64):
+            cv2.imwrite('labeled_Imgs/'+str(self.labelNames[predictions[i]])+"/"+str(self.counter)+".png",cv2.cvtColor((imgs[i]*255).astype(np.uint8),cv2.COLOR_RGB2BGR))
+            self.counter+=1
