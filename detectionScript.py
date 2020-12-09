@@ -45,7 +45,7 @@ class chess_digitizer:
         detect = ChessboardDetector(
             "models/detection", "models/classification.h5")
         board = Chessboard()
-        cap = cv2.VideoCapture('input_imgs/20201209_111609.mp4')
+        # cap = cv2.VideoCapture('input_imgs/20201209_111609.mp4')
 
 
         filenames = glob.glob("input_imgs/*")
