@@ -1,8 +1,10 @@
 # Digitizing chess moves from video
 
+<img src="docs/video.gif" width=100%>
+
 The goal of this repo is to extract and digitize a chess match from images or a video source. Images can be taken from any perspective of the board as long as all pieces are still partly visible. The digitization makes it possible to play against a chessbot or someone online on a physical chessboard.
 
-The digitization is split into 3 parts. First the 4 corners of the chessboard are detected using a neural net performing keypoint detection. The board is then split into 64 images representing each checkboard cell. These images are classified with another neural net.
+The digitization is split into 3 parts. First the 4 corners of the chessboard are detected using a neural net performing keypoint detection. The board is then split into 64 images representing each checkerboard cell. These images are classified with another neural net.
 
 In the last step the current digitized board will be compared to previous boards to extract a chess move.
 
