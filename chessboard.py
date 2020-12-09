@@ -12,7 +12,7 @@ class Chessboard:
 
     posChar = ["a", "b", "c", "d", "e", "f", "g", "h"]
     fenChar = ["p", "P", "q", "Q", "k", "K", "e", "b", "B", "n", "N", "r", "R"]
-    numericBoard = np.array([[11,  9,  7,  2,  4,  7,  9, 11],
+    numeric_board = np.array([[11,  9,  7,  2,  4,  7,  9, 11],
                              [0,  0,  0,  0,  0,  0,  0,  0],
                              [6,  6,  6,  6,  6,  6,  6,  6],
                              [6,  6,  6,  6,  6,  6,  6,  6],
@@ -27,7 +27,7 @@ class Chessboard:
         """
         self.board = chess.Board()
         self.engine = chess.engine.SimpleEngine.popen_uci("./engine/stockfish")
-    def predictions2Image(self, predictions):
+    def predictions_to_img(self, predictions):
         """Converts predictions to FEN image format .
 
         Args:
@@ -36,11 +36,11 @@ class Chessboard:
         Returns:
             [type]: [description]
         """
-        rotPredictions = self.rotatePredictions(predictions)
-        fen_string = self.predictions2FEN(rotPredictions)
+        rotated_predictions = self.rotate_predictions(predictions)
+        fen_string = self.predictions_to_fen(rotated_predictions)
         return self.fen2Image(fen_string)
 
-    def predictions2move(self, predictions):
+    def predictions_to_move(self, predictions):
         """transforms a list of prediction to a chess move
 
         Args:
@@ -49,55 +49,61 @@ class Chessboard:
         Returns:
             [type]: [description]
         """
-        rotPredictions = self.rotatePredictions(predictions)
-        diff = self.numericBoard - rotPredictions
-        diffLocations = np.transpose(np.nonzero(diff))
-        locationNames = []
-        boardChanged = False
-        for loc in diffLocations:
-            locationNames.append(self.posChar[loc[1]]+str(8-loc[0]))
-        if len(locationNames) == 2:
-            moveOption1 = chess.Move.from_uci(
-                locationNames[0]+locationNames[1])
-            moveOption2 = chess.Move.from_uci(
-                locationNames[1]+locationNames[0])
-            if moveOption1 in self.board.legal_moves:
-                self.board.push_uci(str(moveOption1))
-                boardChanged = True
-            elif moveOption2 in self.board.legal_moves:
-                self.board.push_uci(str(moveOption2))
-                boardChanged = True
+        rotated_predictions = self.rotate_predictions(predictions)
+        diff = self.numeric_board - rotated_predictions
+        diff_indx = np.transpose(np.nonzero(diff))
+        loc_names = []
+        board_changed = False
+        for loc in diff_indx:
+            loc_names.append(self.posChar[loc[1]]+str(8-loc[0]))
+        if len(loc_names) == 2:
+            move_opt_1 = chess.Move.from_uci(
+                loc_names[0]+loc_names[1])
+            move_opt_2 = chess.Move.from_uci(
+                loc_names[1]+loc_names[0])
+            if move_opt_1 in self.board.legal_moves:
+                self.board.push_uci(str(move_opt_1))
+                board_changed = True
+            elif move_opt_2 in self.board.legal_moves:
+                self.board.push_uci(str(move_opt_2))
+                board_changed = True
             # else:
             #     print("No legal move in Img")
         # Casteling moves
-        elif len(locationNames) == 4:
-            if "a1" in locationNames and chess.Move.from_uci("e1c1") in self.board.legal_moves:
+        elif len(loc_names) == 4:
+            if "a1" in loc_names and chess.Move.from_uci("e1c1") in self.board.legal_moves:
                 self.board.push_uci("e1c1")
-                boardChanged = True
-            elif "h1" in locationNames and chess.Move.from_uci("e1g1") in self.board.legal_moves:
+                board_changed = True
+            elif "h1" in loc_names and chess.Move.from_uci("e1g1") in self.board.legal_moves:
                 self.board.push_uci("e1g1")
-                boardChanged = True
-            elif "a8" in locationNames and chess.Move.from_uci("e8c8") in self.board.legal_moves:
+                board_changed = True
+            elif "a8" in loc_names and chess.Move.from_uci("e8c8") in self.board.legal_moves:
                 self.board.push_uci("e8c8")
-                boardChanged = True
-            elif "h8" in locationNames and chess.Move.from_uci("e8g8") in self.board.legal_moves:
+                board_changed = True
+            elif "h8" in loc_names and chess.Move.from_uci("e8g8") in self.board.legal_moves:
                 self.board.push_uci("e8g8")
-                boardChanged = True
+                board_changed = True
         #     else:
         #         print("No legal move in Img")
         # else:
         #     print("No legal move in Img")
-        if boardChanged:
-            self.numericBoard = rotPredictions
-            eng = self.engine.play(self.board,chess.engine.Limit(depth = 18),info = chess.engine.INFO_ALL,options={"Skill Level":0})
+        if board_changed:
+            self.numeric_board = rotated_predictions
+            eng = self.engine.play(self.board,chess.engine.Limit(depth = 15),info = chess.engine.INFO_ALL,options={"Skill Level":0})
             info = eng.info
             self.mv = eng.move
-            self.bestMv = info["pv"][0]
-            self.score = (-1)**(1-info["score"].turn)*info["score"].relative.cp/100
+            try:
+                self.bestMv = info["pv"][0]
+            except:
+                pass
+            try:
+                self.score = (-1)**(1-info["score"].turn)*info["score"].relative.cp/100
+            except:
+                self.score =  "M" + str((-1)**(1-info["score"].turn)*info["score"].relative.mate())
             print(self.score)
-        return boardChanged
+        return board_changed
 
-    def rotatePredictions(self, predictions):
+    def rotate_predictions(self, predictions):
         """Rotate predictions to have white at the bottom
 
         Args:
@@ -110,10 +116,10 @@ class Chessboard:
         diffs = []
         for i in range(4):
             diffs.append(np.count_nonzero(
-                self.numericBoard-np.rot90(preds, i)))
+                self.numeric_board-np.rot90(preds, i)))
         return np.rot90(preds, np.argmin(diffs))
 
-    def predictions2FEN(self, predictions):
+    def predictions_to_fen(self, predictions):
         """Converts predictions to FEN string.
 
         Args:
@@ -122,12 +128,12 @@ class Chessboard:
         Returns:
             [type]: [description]
         """
-        rotPredictions = predictions.reshape(64)
+        rotated_predictions = predictions.reshape(64)
         fen_string = ""
         for i in range(8):
             empty_counter = 0
             for j in range(8):
-                if self.fenChar[rotPredictions[i*8+j]] == "e":
+                if self.fenChar[rotated_predictions[i*8+j]] == "e":
                     empty_counter += 1
                     if j == 7:
                         fen_string += str(empty_counter)
@@ -135,9 +141,9 @@ class Chessboard:
                     if empty_counter > 0:
                         fen_string += str(empty_counter)
                         empty_counter = 0
-                        fen_string += self.fenChar[rotPredictions[i*8+j]]
+                        fen_string += self.fenChar[rotated_predictions[i*8+j]]
                     else:
-                        fen_string += self.fenChar[rotPredictions[i*8+j]]
+                        fen_string += self.fenChar[rotated_predictions[i*8+j]]
             if i != 7:
                 fen_string += "/"
         return fen_string
@@ -154,18 +160,21 @@ class Chessboard:
         board = chess.Board(fen_string + " w - - 0 1")
         svg = chess.svg.board(board, size=350)
         png = svg2png(bytestring=svg)
-        pilImg = Image.open(BytesIO(png)).convert('RGBA')
-        return cv2.cvtColor(np.array(pilImg), cv2.COLOR_RGBA2BGRA)
+        pil_img = Image.open(BytesIO(png)).convert('RGBA')
+        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGRA)
     
-    def currentBoard2Image(self):
-        if len(self.board.move_stack) > 0:
-            bestMvArr = chess.svg.Arrow(self.bestMv.from_square,self.bestMv.to_square,color="blue")
-            mvArr = chess.svg.Arrow(self.mv.from_square,self.mv.to_square,color="green")
-            # svg = chess.svg.board(self.board,lastmove=self.board.peek(),arrows = [mvArr,bestMvArr], size=350)
-            svg = chess.svg.board(self.board,lastmove=self.board.peek(), size=350)
+    def curr_board_to_img(self):
+        if self.score != "M0":
+            if len(self.board.move_stack) > 0:
+                best_move = chess.svg.Arrow(self.bestMv.from_square,self.bestMv.to_square,color="blue")
+                engine_move = chess.svg.Arrow(self.mv.from_square,self.mv.to_square,color="green")
+                # svg = chess.svg.board(self.board,lastmove=self.board.peek(),arrows = [engine_move,best_move], size=350)
+                svg = chess.svg.board(self.board,lastmove=self.board.peek(), size=385)
+            else:
+                svg = chess.svg.board(self.board, size=385)
         else:
-            svg = chess.svg.board(self.board, size=350)
+            svg = chess.svg.board(self.board, size=385)
         png = svg2png(bytestring=svg)
-        pilImg = Image.open(BytesIO(png)).convert('RGBA')
-        return cv2.cvtColor(np.array(pilImg), cv2.COLOR_RGBA2BGRA)
+        pil_img = Image.open(BytesIO(png)).convert('RGBA')
+        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGRA)
 

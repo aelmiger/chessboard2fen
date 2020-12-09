@@ -11,24 +11,32 @@ class ChessboardDetector:
     Class for corner detection of a chessboard with pose estimation
     """
 
-    camM = np.array([[3.13479737e+03, 0.00000000e+00, 2.04366415e+03],
+    cam_m = np.array([[3.13479737e+03, 0.00000000e+00, 2.04366415e+03],
                      [0.00000000e+00, 3.13292625e+03, 1.50698424e+03],
                      [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-    distM = np.array([[2.08959569e-01, -9.49127601e-01, -
+    dist_m = np.array([[2.08959569e-01, -9.49127601e-01, -
                        2.70203242e-03, -1.20066339e-04, 1.33323676e+00]])
+
+    # cam_m = np.array([[1.52065634e+03, 0.00000000e+00, 9.73593337e+02],
+    #                   [0.00000000e+00, 1.52151939e+03, 5.40215278e+02],
+    #                   [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+
+    # dist_m = np.array([[2.71779902e-01, -1.43729610e+00, -
+    #                     6.41435289e-04, -4.28961056e-04, 2.29535075e+00]])
+
     labelNames = ["Bauer_s", "Bauer_w", "Dame_s", "Dame_w", "Koenig_s", "Koenig_w",
                   "LEER", "Laeufer_s", "Laeufer_w", "Pferd_s", "Pferd_w", "Turm_s", "Turm_w"]
     maxFig = [8, 8, 1, 1, 1, 1, np.inf, 2, 2, 2, 2, 2, 2]
-    destCoords = np.array(
+    dest_coords = np.array(
         [[0, 80, 0], [80, 80, 0], [80, 0, 0], [0, 0, 0]], dtype=np.float32)
     counter = 0
 
-    def __init__(self, detectModelPath, classificModelPath):
+    def __init__(self, detect_model_path, classification_model_path):
         """
 
         Args:
-            detectModelPath (string): Folder path to Keras Pose Model
-            classificModelPath (string): Folder path to Keras Classification Model
+            detect_model_path (string): Folder path to Keras Pose Model
+            classification_model_path (string): Folder path to Keras Classification Model
         """
         # Speed up inference
         tf.config.optimizer.set_jit(True)
@@ -38,11 +46,11 @@ class ChessboardDetector:
             physical_devices) > 0, "Not enough GPU hardware devices available"
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
         # Import models
-        self.detectionModel = keras.models.load_model(detectModelPath)
-        self.classficModel = keras.models.load_model(classificModelPath)
+        self.detection_model = keras.models.load_model(detect_model_path)
+        self.classification_model = keras.models.load_model(
+            classification_model_path)
 
-
-    def predictBoardCorners(self, img):
+    def predict_board_corners(self, img):
         """ Function detects for coners of chessboard
 
         Args:
@@ -50,23 +58,25 @@ class ChessboardDetector:
         """
         assert img.shape[2] == 3, "image should be in color"
 
-        #convert img to right size and rgb order
+        # convert img to right size and rgb order
         self.preprocessImg(img)
 
-        # estimate 4 board corners 
-        predictions = self.detectionModel.predict(
+        # estimate 4 board corners
+        predictions = self.detection_model.predict(
             np.expand_dims(self.img_rgb, axis=0))
 
         # if two points are too close -> rotate image by 45degrees and predict again
         if(self.overlappingPoints(predictions)):
-            predictions = self.rotAndPredict(30)
+            predictions = self.rotate_and_predict(30)
 
         if predictions is None:
-            return None
-        
-        #sort chessboard cornerpoints in a clockwise fashion starting with top left point
-        self.cornerPts = self.refinePredictions(predictions)        
-        return self.cornerPts
+            cv2.putText(self.img_rgb, "Cant detect board", (225, 370),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+            return []
+
+        # sort chessboard cornerpoints in a clockwise fashion starting with top left point
+        self.corner_pts = self.refine_predictions(predictions)
+        return self.corner_pts
 
     def predictBoard(self, img, corners):
         """Predict board with given image and corners .
@@ -80,25 +90,22 @@ class ChessboardDetector:
         """
         self.img_nn = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         self.img_nn = self.img_nn / 255
-        scaleFacCornerEstim = img.shape[1]/512
-        scaledCorners = np.array(corners) * scaleFacCornerEstim
-        _, r, t = cv2.solvePnP(self.destCoords, scaledCorners,
-                               self.camM, self.distM)
+        scale_factor = img.shape[1]/512
+        scaled_corners = np.array(corners) * scale_factor
+        _, r, t = cv2.solvePnP(self.dest_coords, scaled_corners,
+                               self.cam_m, self.dist_m)
         imgs = []
         for i in range(8):
             for j in range(8):
-                cellImg = self.getImgOfCell(7-i, j, r, t)
-                # cv2.imshow("",cellImg)
-                # cv2.waitKey(0)
-                imgs.append(cellImg)
+                cell_img = self.get_cell_img(7-i, j, r, t)
+                imgs.append(cell_img)
         imgs = np.array(imgs)
-        confidence = self.classficModel.predict(imgs, batch_size=8)
-        predictions =  self.filterPredicted(confidence)
+        confidence = self.classification_model.predict(imgs, batch_size=8)
+        predictions = self.filter_predictions(confidence)
         # self.writeCellImgsToFolder(predictions,imgs)
         return predictions
 
-
-    def filterPredicted(self, confidence):
+    def filter_predictions(self, confidence):
         """Filter out predictions of chess pieces by logic (only one king on board etc.)
 
         Args:
@@ -107,28 +114,28 @@ class ChessboardDetector:
         Returns:
             [type]: filtered predictions
         """
-        boardLayout = -np.ones(64)
-        sortedConfid = np.argsort(-np.amax(confidence, axis=-1))
+        board_layout = -np.ones(64)
+        sort_confidence = np.argsort(-np.amax(confidence, axis=-1))
         for i in range(64):
-            indx = sortedConfid[i]
-            unique, counts = np.unique(boardLayout, return_counts=True)
-            figDict = dict(zip(unique, counts))
+            indx = sort_confidence[i]
+            unique, counts = np.unique(board_layout, return_counts=True)
+            fig_dict = dict(zip(unique, counts))
 
-            tooManyOfType = True
-            indxCounter = 0
-            currentFig = np.argsort(-confidence[indx])
-            while(tooManyOfType):
+            too_many_of_fig = True
+            indx_counter = 0
+            curr_fig = np.argsort(-confidence[indx])
+            while(too_many_of_fig):
                 try:
-                    tooManyOfType = figDict[currentFig[indxCounter]
-                                            ] >= self.maxFig[currentFig[indxCounter]]
+                    too_many_of_fig = fig_dict[curr_fig[indx_counter]
+                                               ] >= self.maxFig[curr_fig[indx_counter]]
                 except KeyError:
-                    tooManyOfType = False
-                if (tooManyOfType):
-                    indxCounter += 1
-            boardLayout[indx] = currentFig[indxCounter]
-        return boardLayout.astype(np.int)
+                    too_many_of_fig = False
+                if (too_many_of_fig):
+                    indx_counter += 1
+            board_layout[indx] = curr_fig[indx_counter]
+        return board_layout.astype(np.int)
 
-    def getImgOfCell(self, cellX, cellY, r, t):
+    def get_cell_img(self, cellX, cellY, r, t):
         """Get the image of a given cell .
 
         Args:
@@ -142,13 +149,13 @@ class ChessboardDetector:
         """
         black = np.zeros((100, 100, 1), dtype="uint8")
         cv2.circle(black, (5+10*cellX, 5+10*cellY), 5, 255, 0)
-        lowPos = np.argwhere(black)
-        upPos = lowPos.copy()
-        upPos[:, 2] = 13
-        pos = np.concatenate((lowPos, upPos)).astype(np.float32)
-        imgpts, _ = cv2.projectPoints(pos, r, t, self.camM, self.distM)
-        imgpts = imgpts.reshape(-1, 2)
-        rect = cv2.minAreaRect(imgpts)
+        low_pos = np.argwhere(black)
+        up_pos = low_pos.copy()
+        up_pos[:, 2] = 13
+        pos = np.concatenate((low_pos, up_pos)).astype(np.float32)
+        img_pts, _ = cv2.projectPoints(pos, r, t, self.cam_m, self.dist_m)
+        img_pts = img_pts.reshape(-1, 2)
+        rect = cv2.minAreaRect(img_pts)
         box = cv2.boxPoints(rect)
         box = np.int0(box)
         width = int(rect[1][0])
@@ -163,28 +170,28 @@ class ChessboardDetector:
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
         # directly warp the rotated rectangle to get the straightened rectangle
-        tempImg = cv2.warpPerspective(
+        temp_img = cv2.warpPerspective(
             self.img_nn, M, (int(width), int(height)))
-        if tempImg.shape[0] < tempImg.shape[1]:
-            tempImg = cv2.rotate(tempImg, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        height = tempImg.shape[0]
-        width = tempImg.shape[1]
+        if temp_img.shape[0] < temp_img.shape[1]:
+            temp_img = cv2.rotate(temp_img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        height = temp_img.shape[0]
+        width = temp_img.shape[1]
         aspRatio = width / height
-        given_Ration = 1 / 2
-        if aspRatio > given_Ration:
-            newWidth = height * given_Ration
-            diff = round((width-newWidth)/2)
-            newMat = tempImg[:, diff:(width - diff), :]
-        elif aspRatio < given_Ration:
-            newHeight = width / given_Ration
-            diff = round((height-newHeight)/2)
-            newMat = tempImg[diff:(height - diff), :, :]
+        given_ratio = 1 / 2
+        if aspRatio > given_ratio:
+            new_width = height * given_ratio
+            diff = round((width-new_width)/2)
+            new_mat = temp_img[:, diff:(width - diff), :]
+        elif aspRatio < given_ratio:
+            new_height = width / given_ratio
+            diff = round((height-new_height)/2)
+            new_mat = temp_img[diff:(height - diff), :, :]
         else:
-            newMat = tempImg
-        newMat = imutils.resize(newMat, width=100)
-        return cv2.resize(newMat, (100, 200)).reshape(200, 100, 3)
+            new_mat = temp_img
+        new_mat = imutils.resize(new_mat, width=100)
+        return cv2.resize(new_mat, (100, 200)).reshape(200, 100, 3)
 
-    def refinePredictions(self, predictions):
+    def refine_predictions(self, predictions):
         """Sort predicted corners in a clockwise fashion. Top left corner is the first element
 
         Args:
@@ -196,10 +203,10 @@ class ChessboardDetector:
         points = predictions[0, :, 0:2].astype(int)
         hull = cv2.convexHull(points, clockwise=False)[:, 0]
         s = hull.sum(axis=1)[0:4]
-        cornerPts = list(np.roll(hull, -np.argmin(s), axis=0))
-        return cornerPts
+        corner_pts = list(np.roll(hull, -np.argmin(s), axis=0))
+        return corner_pts
 
-    def rotAndPredict(self, angle):
+    def rotate_and_predict(self, angle):
         """Rotates input img and runs prediction again
 
         Args:
@@ -208,11 +215,10 @@ class ChessboardDetector:
         Returns:
             [type]: returns prediction with corrected rotation
         """
-        rotImg = imutils.rotate(self.img_rgb, angle=-angle)
-        predictions = self.detectionModel.predict(
-            np.expand_dims(rotImg, axis=0))
+        rot_imgs = imutils.rotate(self.img_rgb, angle=-angle)
+        predictions = self.detection_model.predict(
+            np.expand_dims(rot_imgs, axis=0))
         if self.overlappingPoints(predictions):
-            print("Could not detect 4 Corners")
             return None
         # Correct rotation of predicted points
         M = cv2.getRotationMatrix2D((256, 192), angle, 1)
@@ -245,7 +251,7 @@ class ChessboardDetector:
         self.img_rgb = cv2.resize(img, (512, 384))
         self.img_rgb = cv2.cvtColor(self.img_rgb, cv2.COLOR_BGR2RGB)
 
-    def writeCellImgsToFolder(self,predictions,imgs):
+    def writeCellImgsToFolder(self, predictions, imgs):
         """Creating training data. Predict board and save each cell img in subfolder
 
         Args:
@@ -253,5 +259,6 @@ class ChessboardDetector:
             imgs ([type]): list of cell imgs
         """
         for i in range(64):
-            cv2.imwrite('labeled_Imgs/'+str(self.labelNames[predictions[i]])+"/"+str(self.counter)+".png",cv2.cvtColor((imgs[i]*255).astype(np.uint8),cv2.COLOR_RGB2BGR))
-            self.counter+=1
+            cv2.imwrite('labeled_Imgs/'+str(self.labelNames[predictions[i]])+"/"+str(
+                self.counter)+".png", cv2.cvtColor((imgs[i]*255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+            self.counter += 1
