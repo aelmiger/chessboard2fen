@@ -4,3 +4,6 @@ yolo_hand_model
 yolo-hand-detection
 labeled_Imgs
 input_imgs_
+.dockerignore
+Dockerfile
+docker-compose.yaml
